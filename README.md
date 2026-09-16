@@ -1,5 +1,10 @@
 # Draw Things Community
 
+> **This fork:** adds `--pose-image` and `models import-controlnet` to `draw-things-cli`
+> so that a Pose (OpenPose) ControlNet can be used from the command line, and fixes the
+> hint value range that made imported ControlNets produce noise. See
+> [docs/POSE_IMAGE.md](docs/POSE_IMAGE.md). Branch: `main`.
+
 This is a community repository that maintains public-facing code that runs [the Draw Things app](https://apps.apple.com/us/app/draw-things-ai-generation/id6444050820).
 
 Currently, it contains the source code for our re-implementation of image generation models, samplers, data models, trainer within the app. Over time, as we move more core functionalities into separate libraries, this repository will grow.

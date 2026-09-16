@@ -572,6 +572,15 @@ struct GenerateImageInputOptions: ParsableArguments {
   var inputImage: String?
 
   @Option(
+    name: .customLong("pose-image"),
+    help: ArgumentHelp(
+      "OpenPose skeleton image for Pose ControlNet.",
+      discussion:
+        "Pass a pre-rendered OpenPose skeleton map (the app does not extract skeletons from photos). Without this, a Pose ControlNet receives no skeleton and silently has no effect."
+    ))
+  var poseImage: String?
+
+  @Option(
     name: .long,
     help: "Driving audio file for audio-conditioned video models (e.g. LongCat-Video-Avatar).")
   var audio: String?
@@ -4143,6 +4152,7 @@ extension DrawThingsCLI {
       imageInput.image = imageInput.image.map(context.path)
       imageInput.initImage = imageInput.initImage.map(context.path)
       imageInput.inputImage = imageInput.inputImage.map(context.path)
+      imageInput.poseImage = imageInput.poseImage.map(context.path)
       imageInput.audio = imageInput.audio.map(context.path)
       output.output = output.output.map(context.path)
 
@@ -4321,8 +4331,28 @@ extension DrawThingsCLI {
       defer {
         livePreviewSession?.finish()
       }
-      let hints: [(ControlHintType, [(AnyTensor, Float)])] =
+      var hints: [(ControlHintType, [(AnyTensor, Float)])] =
         audioConditioning.map { [(.audio, $0.tensors.map { ($0, 1) })] } ?? []
+      if let posePath = imageInput.poseImage {
+        var poseTensor = try loadInputImageTensor(
+          path: posePath, imageWidth: Int(configuration.startWidth) * 64,
+          imageHeight: Int(configuration.startHeight) * 64)
+        // The image loader yields values in [-1, 1] (the img2img convention). Pose hints go
+        // straight into the ControlNet hint network, which expects [0, 1] like the skeleton
+        // the app renders itself. Feeding [-1, 1] turns the black background into -1 and the
+        // hint activations blow up (observed ~5e4 instead of ~5), degrading the output to noise.
+        let poseShape = poseTensor.shape
+        for n in 0..<poseShape[0] {
+          for y in 0..<poseShape[1] {
+            for x in 0..<poseShape[2] {
+              for c in 0..<poseShape[3] {
+                poseTensor[n, y, x, c] = (poseTensor[n, y, x, c] + 1) * 0.5
+              }
+            }
+          }
+        }
+        hints.append((.pose, [(poseTensor, 1)]))
+      }
       context.print("Models directory: \(modelsDirectory.path)")
       let result = try runner.generate(
         prompt: promptValues.prompt, negativePrompt: resolvedNegativePrompt,
@@ -4685,7 +4715,7 @@ extension DrawThingsCLI {
     static let configuration = CommandConfiguration(
       abstract: "Model utilities.",
       discussion: CLIHelpText.models,
-      subcommands: [List.self, Ensure.self, Import.self]
+      subcommands: [List.self, Ensure.self, Import.self, ImportControlNet.self]
     )
 
     struct List: DrawThingsCLICommand {
@@ -4768,6 +4798,97 @@ extension DrawThingsCLI {
           context: context,
           files, modelsDirectory: modelsDirectory, downloadMissing: true)
         context.print("Model ready: \(modelSpecification.file)")
+      }
+    }
+
+    struct ImportControlNet: DrawThingsCLICommand {
+      static let configuration = CommandConfiguration(
+        commandName: "import-controlnet",
+        abstract: "Import a local ControlNet checkpoint or safetensors artifact.",
+        discussion: """
+          Converts an external ControlNet (for example an OpenPose SDXL model from Hugging Face)
+          into the Draw Things internal format and registers it in custom_controlnet.json so it
+          can be referenced from a generation config.
+
+          EXAMPLE:
+            draw-things-cli models import-controlnet ./openpose-sdxl.safetensors \\
+              --name "OpenPose SDXL" --modifier pose
+          """)
+
+      @OptionGroup var modelsDirectoryOptions: ModelsDirectoryOptions
+
+      @Argument(help: "Local ControlNet artifact (.safetensors or .ckpt).")
+      var artifact: String
+
+      @Option(name: .long, help: "Display name for the imported ControlNet.")
+      var name: String?
+
+      @Option(
+        name: .long,
+        help:
+          "Control hint type this model consumes (pose, canny, depth, scribble, softedge, lineart, normalbae, seg, tile, color, custom)."
+      )
+      var modifier: String?
+
+      @Flag(name: .long, help: "Overwrite an existing imported ControlNet with the same id.")
+      var replace: Bool = false
+
+      mutating func run(context: DrawThingsCLIContext) throws {
+        let modelsDirectory = try ModelsDirectoryResolver.resolve(
+          context: context, path: modelsDirectoryOptions.modelsDir)
+        ModelZoo.isExternalUrlsPreferred = true
+        ModelZoo.externalUrls = [modelsDirectory]
+
+        let artifactURL = try resolvedLocalFileURL(artifact)
+        let displayName =
+          name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+          ? name!.trimmingCharacters(in: .whitespacesAndNewlines)
+          : artifactURL.deletingPathExtension().lastPathComponent
+        let internalName = Importer.cleanup(
+          filename: artifactURL.deletingPathExtension().lastPathComponent)
+        guard !internalName.isEmpty else {
+          throw ValidationError(
+            "Unable to derive a valid internal id from '\(artifactURL.lastPathComponent)'.")
+        }
+        let outputFile = "\(internalName)_ctrl_f16.ckpt"
+        let outputPath = ModelZoo.filePathForModelDownloaded(outputFile)
+        if !replace && FileManager.default.fileExists(atPath: outputPath) {
+          throw ValidationError(
+            "Refusing to overwrite existing file:\n  - \(outputFile)\nRe-run with --replace.")
+        }
+
+        var hintType: ControlHintType? = nil
+        if let modifier = modifier?.lowercased() {
+          hintType = ControlHintType.allCases.first { "\($0)".lowercased() == modifier }
+          guard hintType != nil else {
+            let known = ControlHintType.allCases.map { "\($0)" }.joined(separator: ", ")
+            throw ValidationError("Unknown --modifier '\(modifier)'. Known values: \(known)")
+          }
+        }
+
+        context.print("Importing ControlNet: \(artifactURL.lastPathComponent)")
+        let importer = ControlNetImporter()
+        let result = try importer.import(
+          downloadedFile: artifactURL.path, name: displayName, filename: outputFile,
+          modifier: hintType
+        ) { _ in }
+
+        let specification = ControlNetZoo.Specification(
+          name: displayName, file: outputFile, modifier: hintType,
+          version: result.version, type: result.type,
+          transformerBlocks: result.transformerBlocks)
+        ControlNetZoo.appendCustomSpecification(specification)
+
+        context.print("")
+        context.print("FIELD      VALUE")
+        context.print("---------  -----------------------------")
+        context.print("FILE       \(outputFile)")
+        context.print("NAME       \(displayName)")
+        context.print("VERSION    \(result.version)")
+        context.print("TYPE       \(result.type)")
+        context.print("MODIFIER   \(hintType.map { "\($0)" } ?? "-")")
+        context.print("")
+        context.print("Registered in custom_controlnet.json.")
       }
     }
 
