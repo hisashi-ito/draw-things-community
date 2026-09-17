@@ -66,6 +66,7 @@ Illustrious系のSDXLモデルで、`draw-things-cli` からPose ControlNetを�
 | 4 | `models import` が、Illustrious系のマージモデルに埋め込みのCLIP・VAEではなく汎用の共有ファイルを紐付ける（[issue #107](https://github.com/drawthingsai/draw-things-community/issues/107)、未解決） | `ModelImporter` | ControlNetの有無にかかわらず、どのプロンプトでも全面ノイズ | 回避策。付属ファイルを切り出して明示的に渡す（`docs/extract_sdxl_companions.py`） |
 | 5 | ファイルが無い、登録が無い、同じファイルが別の種類で二重に登録されている、のどれでも、その制御は何も言わずに捨てられる | `LocalImageGenerator` の判定、`custom_controlnet.json` | 1と見分けのつかない無反応 | 手順5の確認項目に記載。コードは変えていない |
 | 6 | 公式配布の統合型「Xinsir Union ProMax」の `pose` 種別は、腕のポーズを再現しない | 統合型の制御経路 | ポーズが部分的にしか効かない | 専用のOpenPoseモデルを使う |
+| 7 | `controlImportance: control` だとポーズが無視されることがある（利用者の報告。GUI でも CLI でも同じ）。このモードは残差を条件付き側だけに入れ、0.825^(12-i) で減衰させる。ここでの総当たりでは 1024 で効いていた（図 4）ので、結果は環境に依る。 | `ControlModel.swift` | ポーズが無視され、何も表示されない。 | `balanced` を使う |
 
 ## 1. CLIのビルド
 
@@ -235,7 +236,7 @@ draw-things-cli generate \
 | `inputOverride` | `pose` | モデルに渡す制御入力の種類。骨格なら `pose` にする |
 | `weight` | `1.0` | 強さ |
 | `guidanceStart`、`guidanceEnd` | `0.0`、`0.6` | ControlNetを効かせるステップの範囲（割合） |
-| `controlImportance` | `balanced` | `balanced`、`prompt`、`control` のいずれか |
+| `controlImportance` | `balanced` | `balanced`、`prompt`、`control` のいずれか。`balanced` のままにする。`control` は A1111 の「ControlNet is more important」に相当し、残差を条件付き側の半分だけに入れ、層ごとに 0.825^(12-i) で減衰させる（`ControlModel.swift`）。高解像度側の残差は約 1/10 になる。ここでの 1024 の総当たりでは T ポーズを再現した（図 4）が、`control` だとポーズが完全に無視され、`balanced` にしたら直ったという報告が利用者からあった（GUI でもこの CLI でも同じ）。ポーズが無視されるときは最初にこの項目を確かめる。 |
 | `noPrompt`、`globalAveragePooling`、`downSamplingRate`、`targetBlocks` | `false`、`false`、`1.0`、`[]` | 既定値 |
 
 何も起きないときの確認項目。いずれもエラーは出ない。

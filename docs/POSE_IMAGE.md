@@ -51,6 +51,7 @@ None of these produce an error or a warning. They stack, which is why the sympto
 | 4 | `models import` links merged Illustrious-type checkpoints to the generic shared CLIP / VAE instead of the embedded ones ([issue #107](https://github.com/drawthingsai/draw-things-community/issues/107), open). | `ModelImporter` | Pure noise for every prompt, with or without ControlNet. | Workaround: extract the companions and pass them explicitly (`docs/extract_sdxl_companions.py`) |
 | 5 | A control whose file is missing, unregistered, or registered twice under different modifiers is dropped without a message. | `LocalImageGenerator` guard chain, `custom_controlnet.json` | "Nothing happens" runs that look like #1. | Documented (checklist in step 5); not changed |
 | 6 | The official "Xinsir Union ProMax" in `pose` mode does not reproduce arm poses. | union control path | Pose partly ignored. | Use a dedicated OpenPose model |
+| 7 | `controlImportance: control` can leave the pose ignored (user report, GUI and CLI alike). The mode applies the residuals to the conditional half only, scaled by 0.825^(12-i); in the sweep here it still worked at 1024 (Figure 4), so the outcome depends on the setup. | `ControlModel.swift` | Pose ignored with no message. | Use `balanced` |
 
 ## 1. Build the CLI
 
@@ -222,7 +223,7 @@ Fields of a `controls[]` entry:
 | `inputOverride` | `pose` | Which hint the model receives. Must be `pose` for a skeleton. |
 | `weight` | `1.0` | Strength. |
 | `guidanceStart`, `guidanceEnd` | `0.0`, `0.6` | Fraction of the steps during which the ControlNet is applied. |
-| `controlImportance` | `balanced` | `balanced`, `prompt` or `control`. |
+| `controlImportance` | `balanced` | `balanced`, `prompt` or `control`. Keep `balanced`. `control` is the A1111 "ControlNet is more important" mode: the residuals are applied to the conditional half of the batch only and scaled per layer by 0.825^(12-i) (`ControlModel.swift`), which cuts the high-resolution residuals to about a tenth. It reproduced the T-pose in the 1024 sweep here (Figure 4), but a user reported that with `control` the pose is ignored entirely on their setup, in the GUI and in this CLI alike, and that `balanced` fixed it. If a pose is ignored, check this field first. |
 | `noPrompt`, `globalAveragePooling`, `downSamplingRate`, `targetBlocks` | `false`, `false`, `1.0`, `[]` | Defaults. |
 
 Silent-failure checklist, in case nothing happens:
