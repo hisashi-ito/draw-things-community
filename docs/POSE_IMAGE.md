@@ -51,7 +51,7 @@ None of these produce an error or a warning. They stack, which is why the sympto
 | 4 | `models import` links merged Illustrious-type checkpoints to the generic shared CLIP / VAE instead of the embedded ones ([issue #107](https://github.com/drawthingsai/draw-things-community/issues/107), open). | `ModelImporter` | Pure noise for every prompt, with or without ControlNet. | Workaround: extract the companions and pass them explicitly (`docs/extract_sdxl_companions.py`) |
 | 5 | A control whose file is missing, unregistered, or registered twice under different modifiers is dropped without a message. | `LocalImageGenerator` guard chain, `custom_controlnet.json` | "Nothing happens" runs that look like #1. | Documented (checklist in step 5); not changed |
 | 6 | The official "Xinsir Union ProMax" in `pose` mode does not reproduce arm poses. | union control path | Pose partly ignored. | Use a dedicated OpenPose model |
-| 7 | `controlImportance: control` can leave the pose ignored (user report, GUI and CLI alike). The mode applies the residuals to the conditional half only, scaled by 0.825^(12-i); in the sweep here it still worked at 1024 (Figure 4), so the outcome depends on the setup. | `ControlModel.swift` | Pose ignored with no message. | Use `balanced` |
+| 7 | `controlImportance: control` can leave the pose ignored (user report, GUI and CLI alike). The mode applies the residuals to the conditional half only, scaled by 0.825^(12-i); in the sweep here it still worked at 1024 (Figure 4), and the same algorithm (diffusers `guess_mode`) with WAI v16 also reproduced the T-pose and the peace sign at 1024 and 512, so the outcome depends on the setup. | `ControlModel.swift` | Pose ignored with no message. | Use `balanced` |
 
 ## 1. Build the CLI
 
